@@ -498,10 +498,117 @@
   ground.rotation.x=-Math.PI/2; ground.position.y=-3.5; ground.receiveShadow=true; ground.visible=false;
   scene.add(ground);
 
-  // ─── AR Button ───
+  // ─── AR Elements: text sprites, rings, glow ───
+  const arElements = [];
+
+  function makeTextSprite(text, opts = {}) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+
+    // Background pill
+    ctx.fillStyle = opts.bg || 'rgba(10,10,26,0.7)';
+    ctx.beginPath();
+    ctx.roundRect(10, 10, canvas.width - 20, canvas.height - 20, 24);
+    ctx.fill();
+
+    // Border
+    ctx.strokeStyle = opts.border || '#d4a853';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(10, 10, canvas.width - 20, canvas.height - 20, 24);
+    ctx.stroke();
+
+    // Text
+    ctx.fillStyle = opts.color || '#ffffff';
+    ctx.font = opts.bold ? 'bold 40px Inter, sans-serif' : '36px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 2);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.minFilter = THREE.LinearFilter;
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+    const sprite = new THREE.Sprite(mat);
+    sprite.scale.set(opts.scale || 1.2, (opts.scale || 1.2) * canvas.height / canvas.width, 1);
+    sprite.position.set(opts.x || 0, opts.y || 0, opts.z || 0);
+    sprite.visible = false;
+    return sprite;
+  }
+
+  // Create AR text labels (hidden until AR mode)
+  const titleLabel = makeTextSprite('TIRZEPATIDA', { x: 0, y: 1.0, z: 0, scale: 1.5, bold: true, color: '#d4a853' });
+  const subtitleLabel = makeTextSprite('GIP / GLP-1 • Agonista Duplo', { x: 0, y: 0.65, z: 0, scale: 0.9, color: '#ffffff', bg: 'rgba(0,0,0,0)' });
+  const mechLabel = makeTextSprite('Controle Glicêmico + Perda de Peso', { x: 0, y: -0.55, z: 0, scale: 0.7, color: 'rgba(255,255,255,0.6)', bg: 'rgba(10,10,26,0.5)' });
+  scene.add(titleLabel);
+  scene.add(subtitleLabel);
+  scene.add(mechLabel);
+  arElements.push(titleLabel, subtitleLabel, mechLabel);
+
+  // Floating info pills
+  const pills = [
+    { text: '🧬 Ação Dupla', color: '#d4a853' },
+    { text: '📊 SURPASS + SURMOUNT', color: '#ff6666' },
+    { text: '🫀 Cardiometabólico', color: '#66ccff' },
+  ];
+  const pillSprites = pills.map((p, i) => {
+    const angle = (i / pills.length) * Math.PI * 2;
+    const r = 0.8;
+    const s = makeTextSprite(p.text, {
+      x: Math.cos(angle) * r, y: -0.3, z: Math.sin(angle) * r,
+      scale: 0.5, color: '#fff', border: p.color, bg: 'rgba(10,10,26,0.6)'
+    });
+    s.visible = false;
+    scene.add(s);
+    return s;
+  });
+  arElements.push(...pillSprites);
+
+  // Glow aura for AR
+  const arGlow = new THREE.Mesh(
+    new THREE.SphereGeometry(1.2, 24, 24),
+    new THREE.MeshBasicMaterial({ color: 0xd4a853, transparent: true, opacity: 0.06, wireframe: true })
+  );
+  arGlow.position.set(0, 0.1, 0);
+  arGlow.visible = false;
+  scene.add(arGlow);
+  arElements.push(arGlow);
+
+  // Orbiting particles for AR
+  const arParticleCount = 80;
+  const arPpos = new Float32Array(arParticleCount * 3);
+  for (let i = 0; i < arParticleCount; i++) {
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(2 * Math.random() - 1);
+    const r = 0.6 + Math.random() * 0.5;
+    arPpos[i*3] = Math.sin(phi) * Math.cos(theta) * r;
+    arPpos[i*3+1] = Math.sin(phi) * Math.sin(theta) * r;
+    arPpos[i*3+2] = Math.cos(phi) * r;
+  }
+  const arParticles = new THREE.Points(
+    new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(arPpos, 3)),
+    new THREE.PointsMaterial({ color: 0xd4a853, size: 0.015, transparent: true, opacity: 0.6 })
+  );
+  arParticles.position.set(0, 0.1, 0);
+  arParticles.visible = false;
+  scene.add(arParticles);
+  arElements.push(arParticles);
+
+  function showARElements() {
+    arElements.forEach(el => el.visible = true);
+  }
+  function hideARElements() {
+    arElements.forEach(el => el.visible = false);
+  }
+
+  // ─── AR Buttons ───
   const arBtn = document.getElementById('arButton');
   const fallback = document.getElementById('arFallback');
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+  // AR animation loop ref for pulsing
+  let arAnimTime = 0;
 
   async function startAR() {
     try {
@@ -512,17 +619,17 @@
       controls.autoRotate = false;
       molecule.scale.set(0.15, 0.15, 0.15);
       ground.visible = true;
+      showARElements();
+      // Start AR animation
+      arAnimTime = 0;
     } catch(e) {
       alert('RA indisponível neste dispositivo. Use o modo 3D normal.');
     }
   }
 
   if (isIOS) {
-    // iOS: AR Quick Look nativo da Apple via arquivo USDZ
     const arLink = document.getElementById('arlink');
-    arBtn.addEventListener('click', () => {
-      arLink.click();
-    });
+    arBtn.addEventListener('click', () => { arLink.click(); });
   } else if ('xr' in navigator) {
     navigator.xr.isSessionSupported('immersive-ar').then(supported => {
       if (supported) {
@@ -531,6 +638,7 @@
           controls.autoRotate = true;
           molecule.scale.set(1, 1, 1);
           ground.visible = false;
+          hideARElements();
         });
       } else {
         arBtn.addEventListener('click', () => {
@@ -558,10 +666,26 @@
   document.getElementById('loading').classList.add('hidden');
 
   // ─── Animate ───
-  function animate() {
+  function animate(time) {
     controls.update();
     stars.rotation.y += 0.0001;
     ringP.rotation.y += 0.003;
+    arAnimTime = time || 0;
+
+    // Pulse AR elements if visible
+    if (arGlow.visible) {
+      const pulse = 1 + 0.1 * Math.sin(arAnimTime * 0.003);
+      arGlow.scale.setScalar(pulse);
+      arParticles.rotation.y += 0.005;
+      arParticles.rotation.x += 0.002;
+      // Rotate pill sprites
+      pillSprites.forEach((s, i) => {
+        const angle = (i / pillSprites.length) * Math.PI * 2 + arAnimTime * 0.0005;
+        s.position.x = Math.cos(angle) * 0.8;
+        s.position.z = Math.sin(angle) * 0.8;
+      });
+    }
+
     renderer.render(scene, camera);
   }
   renderer.setAnimationLoop(animate);
